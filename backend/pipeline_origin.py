@@ -5,11 +5,12 @@ Sport Vision — CV 处理流水线
 
 import cv2
 import base64
+import numpy as np
 import time
+from pathlib import Path
 from typing import Optional, AsyncGenerator
 
-from backend.person_detector_yolo import PersonDetectorYOLO
-from backend.pose_analyzer_onnx import PoseAnalyzerONNX
+from backend.pose_analyzer import PoseAnalyzer
 from backend.action_recognizer import ActionRecognizer
 from backend.visualizer import Visualizer
 
@@ -18,8 +19,7 @@ class Pipeline:
     """视频分析流水线"""
 
     def __init__(self):
-        self.person_detector = PersonDetectorYOLO()
-        self.pose_analyzer = PoseAnalyzerONNX()
+        self.pose_analyzer = PoseAnalyzer()
         self.action_recognizer = ActionRecognizer()
         self.visualizer = Visualizer()
         self.is_running = False
@@ -87,20 +87,11 @@ class Pipeline:
                 if frame.shape[1] != target_w:
                     frame = cv2.resize(frame, (target_w, target_h))
 
-                detection_result = self.person_detector.detect(frame)
-
-                # RGB 转换
+                # RGB 转换（MediaPipe 需要 RGB）
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
                 # 1. 姿态分析
-                pose_result = None
-                if detection_result is not None:
-                    pose_result = self.pose_analyzer.process_frame(
-                        frame_rgb,
-                        roi=detection_result["bbox"],
-                    )
-                    if pose_result is not None:
-                        pose_result["detection"] = detection_result
+                pose_result = self.pose_analyzer.process_frame(frame_rgb)
 
                 # 2. 动作识别
                 action_result = None
@@ -155,8 +146,6 @@ class Pipeline:
             "biomechanics": pose_result["biomechanics"],
             "center_of_mass": pose_result["center_of_mass"],
             "confidence": pose_result["confidence"],
-            "detection": pose_result.get("detection"),
-            "roi": pose_result.get("roi"),
         }
 
     def stop(self):
@@ -166,5 +155,4 @@ class Pipeline:
     def close(self):
         """释放所有资源"""
         self.stop()
-        self.person_detector.close()
         self.pose_analyzer.close()

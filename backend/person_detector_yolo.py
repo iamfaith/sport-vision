@@ -42,6 +42,8 @@ class PersonDetectorYOLO:
             verbose=False,
         )
         self.tracked_bbox: Optional[np.ndarray] = None
+        self.pending_manual_target: Optional[np.ndarray] = None
+        self.manual_target_active = False
         self.missed_frames = 0
 
         stride = max(self.model.stride) if isinstance(self.model.stride, list) else self.model.stride
@@ -49,6 +51,9 @@ class PersonDetectorYOLO:
         self.model.warmup(imgsz=(3, self.input_size[0], self.input_size[1]))
 
     def detect(self, frame_bgr: np.ndarray) -> Optional[dict]:
+        if self.manual_target_active and self.tracked_bbox is None and self.pending_manual_target is None:
+            return None
+
         resized_frame, _, _ = letterbox(frame_bgr, self.input_size)
         image = resized_frame.transpose(2, 0, 1)
         image = image[::-1]
@@ -74,6 +79,19 @@ class PersonDetectorYOLO:
         return self._build_detection_result(selected_box, frame_bgr.shape, float(scores[best_index]), int(class_ids[best_index]))
 
     def reset(self):
+        self.tracked_bbox = None
+        self.pending_manual_target = None
+        self.manual_target_active = False
+        self.missed_frames = 0
+
+    def set_manual_target(self, x: float, y: float):
+        self.pending_manual_target = np.array([float(x), float(y)], dtype=np.float32)
+        self.manual_target_active = True
+        self.missed_frames = 0
+
+    def clear_manual_target(self):
+        self.pending_manual_target = None
+        self.manual_target_active = False
         self.tracked_bbox = None
         self.missed_frames = 0
 
@@ -112,6 +130,12 @@ class PersonDetectorYOLO:
         )
 
     def _select_best_detection(self, boxes: np.ndarray, scores: np.ndarray, frame_shape: tuple[int, ...]) -> Optional[int]:
+        if self.pending_manual_target is not None:
+            return self._select_manual_target(boxes, scores)
+
+        if self.manual_target_active and self.tracked_bbox is None:
+            return None
+
         if self.tracked_bbox is not None:
             return self._select_tracked_detection(boxes, scores, frame_shape)
 
@@ -152,6 +176,32 @@ class PersonDetectorYOLO:
             return self._select_by_salience(boxes, scores, frame_shape)
 
         return int(np.argmax(ranking))
+
+    def _select_manual_target(self, boxes: np.ndarray, scores: np.ndarray) -> Optional[int]:
+        target_point = self.pending_manual_target
+        if target_point is None:
+            return None
+
+        contains_target = []
+        for index, box in enumerate(boxes):
+            if box[0] <= target_point[0] <= box[2] and box[1] <= target_point[1] <= box[3]:
+                contains_target.append(index)
+
+        if contains_target:
+            best_index = max(contains_target, key=lambda index: float(scores[index]))
+        else:
+            centers = np.array([self._box_center(box) for box in boxes], dtype=np.float32)
+            distances = np.linalg.norm(centers - target_point[None, :], axis=1)
+            best_index = int(np.argmin(distances))
+            best_box = boxes[best_index]
+            best_distance = float(distances[best_index])
+            threshold = max(self._box_area(best_box) ** 0.5 * 0.75, 60.0)
+            if best_distance > threshold:
+                return None
+
+        self.pending_manual_target = None
+        self.manual_target_active = True
+        return int(best_index)
 
     def _select_by_salience(self, boxes: np.ndarray, scores: np.ndarray, frame_shape: tuple[int, ...]) -> int:
         frame_area = float(frame_shape[0] * frame_shape[1])
@@ -194,6 +244,7 @@ class PersonDetectorYOLO:
             "class_id": int(class_id),
             "tracking_prediction": tracking_prediction,
             "lock_first_target": self.lock_first_target,
+            "manual_target_active": self.manual_target_active,
         }
 
     def _box_center(self, box: np.ndarray) -> np.ndarray:

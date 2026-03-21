@@ -40,6 +40,38 @@ app.add_middleware(
 active_pipelines: dict[str, Pipeline] = {}
 
 
+async def stream_video_results(websocket: WebSocket, pipeline: Pipeline, video_path: str, session_id: str):
+    try:
+        async for result in pipeline.process_video(
+            video_path,
+            target_fps=20,
+            skip_frames=1
+        ):
+            if "error" in result:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": result["error"]
+                })
+                return
+
+            await websocket.send_json({
+                "type": "frame",
+                "data": result,
+            })
+
+        await websocket.send_json({
+            "type": "complete",
+            "session_id": session_id,
+        })
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        await websocket.send_json({
+            "type": "error",
+            "message": str(exc)
+        })
+
+
 # ============ REST API ============
 
 @app.get("/api/demos")
@@ -103,6 +135,7 @@ async def websocket_analyze(websocket: WebSocket):
     await websocket.accept()
     session_id = str(uuid.uuid4())[:8]
     pipeline: Optional[Pipeline] = None
+    processing_task: Optional[asyncio.Task] = None
 
     try:
         while True:
@@ -114,6 +147,12 @@ async def websocket_analyze(websocket: WebSocket):
                 # 停止之前的流水线
                 if pipeline:
                     pipeline.stop()
+                if processing_task:
+                    processing_task.cancel()
+                    try:
+                        await processing_task
+                    except asyncio.CancelledError:
+                        pass
 
                 # 确定视频路径
                 video_path = None
@@ -145,42 +184,41 @@ async def websocket_analyze(websocket: WebSocket):
                     "video": video_path,
                 })
 
-                # 异步处理视频帧
-                try:
-                    async for result in pipeline.process_video(
-                        video_path,
-                        target_fps=20,
-                        skip_frames=1
-                    ):
-                        if "error" in result:
-                            await websocket.send_json({
-                                "type": "error",
-                                "message": result["error"]
-                            })
-                            break
-
-                        await websocket.send_json({
-                            "type": "frame",
-                            "data": result,
-                        })
-
-                    # 处理完成
-                    await websocket.send_json({
-                        "type": "complete",
-                        "session_id": session_id,
-                    })
-                except Exception as e:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": str(e)
-                    })
+                processing_task = asyncio.create_task(
+                    stream_video_results(websocket, pipeline, video_path, session_id)
+                )
 
             elif data.get("type") == "stop":
                 if pipeline:
                     pipeline.stop()
+                    if processing_task:
+                        processing_task.cancel()
+                        try:
+                            await processing_task
+                        except asyncio.CancelledError:
+                            pass
+                        processing_task = None
                     await websocket.send_json({
                         "type": "stopped",
                         "session_id": session_id,
+                    })
+
+            elif data.get("type") == "select_target":
+                if pipeline:
+                    x = float(data.get("x", 0))
+                    y = float(data.get("y", 0))
+                    pipeline.set_manual_target(x, y)
+                    await websocket.send_json({
+                        "type": "target_selected",
+                        "x": x,
+                        "y": y,
+                    })
+
+            elif data.get("type") == "clear_target":
+                if pipeline:
+                    pipeline.clear_manual_target()
+                    await websocket.send_json({
+                        "type": "target_cleared",
                     })
 
     except WebSocketDisconnect:
@@ -191,6 +229,12 @@ async def websocket_analyze(websocket: WebSocket):
         except Exception:
             pass
     finally:
+        if processing_task:
+            processing_task.cancel()
+            try:
+                await processing_task
+            except asyncio.CancelledError:
+                pass
         if pipeline:
             pipeline.close()
         active_pipelines.pop(session_id, None)

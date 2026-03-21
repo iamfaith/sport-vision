@@ -76,6 +76,7 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 当前视频链路已经改为先用轻量级 YOLO 做人体检测，再把检测框裁剪后送入 ONNX pose 模型。
 默认开启“只跟踪第一次出现的主目标”模式，多人场景下会优先保持同一个人，降低切人概率。
+分析界面支持点击 🎯 后在视频上手动点选主目标，画面也会显示当前检测框和跟踪状态。
 
 ## 🎬 Usage
 
@@ -83,6 +84,7 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 2. **Use demo videos** — Place `.mp4` files in the `demo_videos/` directory
 3. **Watch the analysis** — Real-time skeleton overlay, action recognition, and biomechanics data
 4. **Review the timeline** — All detected actions are recorded in the action timeline
+5. **Lock the main athlete** — Click `🎯` in the analysis view, then click the player in the frame to manually lock the target
 
 ## 🏗️ Architecture
 

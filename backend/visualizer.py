@@ -41,7 +41,7 @@ class Visualizer:
         self.max_trajectory = 60
 
     def render_frame(self, frame: np.ndarray, analysis: Optional[dict],
-                     action_result: Optional[dict]) -> np.ndarray:
+                     action_result: Optional[dict], detection: Optional[dict] = None) -> np.ndarray:
         """
         在帧上叠加所有可视化元素
 
@@ -51,6 +51,9 @@ class Visualizer:
             action_result: ActionRecognizer 输出
         """
         overlay = frame.copy()
+
+        if detection:
+            self._draw_detection_box(overlay, detection)
 
         if analysis:
             # 绘制骨骼
@@ -67,9 +70,55 @@ class Visualizer:
             self._draw_action_label(overlay, action_result)
 
         # 绘制信息面板
-        self._draw_info_panel(overlay, analysis, action_result)
+        self._draw_info_panel(overlay, analysis, action_result, detection)
 
         return overlay
+
+    def _draw_detection_box(self, frame: np.ndarray, detection: dict):
+        bbox = detection.get("bbox")
+        if not bbox:
+            return
+
+        x1 = int(bbox["x1"])
+        y1 = int(bbox["y1"])
+        x2 = int(bbox["x2"])
+        y2 = int(bbox["y2"])
+
+        is_tracking_prediction = detection.get("tracking_prediction", False)
+        is_manual_target = detection.get("manual_target_active", False)
+
+        color = (0, 220, 255)
+        label = f"YOLO {detection.get('score', 0.0):.2f}"
+        if is_manual_target:
+            color = (80, 255, 120)
+            label = "MANUAL LOCK"
+        elif is_tracking_prediction:
+            color = (0, 180, 255)
+            label = "TRACK PRED"
+        elif detection.get("lock_first_target"):
+            color = (255, 200, 0)
+            label = "FIRST TARGET"
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+        text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0]
+        text_y = max(24, y1 - 10)
+        cv2.rectangle(
+            frame,
+            (x1, text_y - text_size[1] - 8),
+            (x1 + text_size[0] + 10, text_y + 4),
+            color,
+            -1,
+        )
+        cv2.putText(
+            frame,
+            label,
+            (x1 + 5, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (10, 10, 20),
+            2,
+            cv2.LINE_AA,
+        )
 
     def _draw_skeleton(self, frame: np.ndarray, analysis: dict):
         """绘制骨骼连线"""
@@ -170,10 +219,10 @@ class Visualizer:
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
 
     def _draw_info_panel(self, frame: np.ndarray, analysis: Optional[dict],
-                         action_result: Optional[dict]):
+                         action_result: Optional[dict], detection: Optional[dict]):
         """左上角信息面板"""
         h, w = frame.shape[:2]
-        panel_w, panel_h = 280, 160
+        panel_w, panel_h = 320, 184
 
         # 半透明背景
         overlay_rect = frame.copy()
@@ -190,11 +239,17 @@ class Visualizer:
         y_offset = 60
         if analysis:
             bio = analysis.get("biomechanics", {})
+            target_mode = "Auto"
+            if detection and detection.get("manual_target_active"):
+                target_mode = "Manual"
+            elif detection and detection.get("tracking_prediction"):
+                target_mode = "Tracking"
             info_lines = [
                 f"Confidence: {analysis['confidence']:.0%}",
                 f"Wrist Speed: {bio.get('wrist_speed', 0):.1f} px/f",
                 f"Body Lean: {bio.get('body_lean', 0):.1f} deg",
                 f"Symmetry: {bio.get('symmetry_score', 0):.0f}%",
+                f"Target Mode: {target_mode}",
             ]
             for line in info_lines:
                 cv2.putText(frame, line, (20, y_offset),

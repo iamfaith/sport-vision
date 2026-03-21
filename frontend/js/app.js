@@ -27,8 +27,11 @@
     const demoBtn = $('demo-btn');
     const demoSelector = $('demo-selector');
     const demoGrid = $('demo-grid');
+    const btnTarget = $('btn-target');
+    const btnClearTarget = $('btn-clear-target');
     const btnStop = $('btn-stop');
     const btnBack = $('btn-back');
+    const videoHint = $('video-hint');
 
     const videoCtx = videoCanvas.getContext('2d');
 
@@ -39,11 +42,14 @@
     let currentSport = 'badminton';
     let frameImage = new Image();
     let lastActionColor = '#00f0ff';
+    let isTargetSelectionMode = false;
+    let isManualTargetLocked = false;
 
     // ============ Initialize ============
     function init() {
         dashboard = new Dashboard();
         bindEvents();
+        setManualTargetLocked(false);
         setStatus('ready', '就绪');
         loadDemos();
     }
@@ -68,8 +74,11 @@
         });
 
         // Stop / Back
+        btnTarget.addEventListener('click', toggleTargetSelectionMode);
+        btnClearTarget.addEventListener('click', clearManualTarget);
         btnStop.addEventListener('click', stopAnalysis);
         btnBack.addEventListener('click', goBack);
+        videoCanvas.addEventListener('click', handleVideoCanvasClick);
     }
 
     // ============ Status ============
@@ -162,6 +171,8 @@
         timelineContainer.innerHTML = '';
         progressFill.style.width = '0%';
         isAnalyzing = true;
+        setTargetSelectionMode(false);
+        setManualTargetLocked(false);
 
         setStatus('processing', '连接分析引擎...');
 
@@ -211,16 +222,34 @@
             case 'complete':
                 setStatus('active', '分析完成');
                 isAnalyzing = false;
+                setTargetSelectionMode(false);
                 break;
 
             case 'stopped':
                 setStatus('ready', '已停止');
                 isAnalyzing = false;
+                setTargetSelectionMode(false);
+                setManualTargetLocked(false);
+                break;
+
+            case 'target_selected':
+                setStatus('processing', '主目标已更新');
+                setManualTargetLocked(true);
+                updateVideoHint('主目标已锁定。可再次点击 🎯 重新指定人物。');
+                break;
+
+            case 'target_cleared':
+                setStatus('processing', '已清除手动目标');
+                setTargetSelectionMode(false);
+                setManualTargetLocked(false);
+                updateVideoHint('已清除手动目标，当前回到自动锁定模式。');
                 break;
 
             case 'error':
                 setStatus('ready', `错误: ${msg.message}`);
                 isAnalyzing = false;
+                setTargetSelectionMode(false);
+                setManualTargetLocked(false);
                 break;
         }
     }
@@ -239,6 +268,8 @@
             videoCtx.drawImage(frameImage, 0, 0);
         };
         frameImage.src = 'data:image/jpeg;base64,' + data.frame_base64;
+
+        syncManualTargetState(data.pose);
 
         // Update action display
         if (data.action) {
@@ -311,7 +342,82 @@
             ws.send(JSON.stringify({ type: 'stop' }));
         }
         isAnalyzing = false;
+        setTargetSelectionMode(false);
+        setManualTargetLocked(false);
         setStatus('ready', '已停止');
+    }
+
+    function toggleTargetSelectionMode() {
+        if (!isAnalyzing || !ws || ws.readyState !== WebSocket.OPEN) {
+            updateVideoHint('请先开始分析，再点选主目标。');
+            return;
+        }
+
+        setTargetSelectionMode(!isTargetSelectionMode);
+        if (isTargetSelectionMode) {
+            updateVideoHint('点一下视频中的目标人物，系统将锁定该对象。');
+        } else {
+            updateVideoHint('点击 🎯 后，在视频上点选你要锁定的主目标。');
+        }
+    }
+
+    function clearManualTarget() {
+        if (!isManualTargetLocked) {
+            updateVideoHint('当前没有手动锁定目标。');
+            return;
+        }
+
+        if (!isAnalyzing || !ws || ws.readyState !== WebSocket.OPEN) {
+            updateVideoHint('请先开始分析，再清除手动锁定。');
+            return;
+        }
+
+        ws.send(JSON.stringify({ type: 'clear_target' }));
+        setTargetSelectionMode(false);
+        updateVideoHint('正在清除手动锁定...');
+    }
+
+    function setTargetSelectionMode(enabled) {
+        isTargetSelectionMode = enabled;
+        btnTarget.classList.toggle('active', enabled);
+        videoCanvas.classList.toggle('target-pick-mode', enabled);
+    }
+
+    function setManualTargetLocked(locked) {
+        isManualTargetLocked = locked;
+        btnClearTarget.disabled = !locked;
+        btnClearTarget.classList.toggle('active', locked);
+    }
+
+    function syncManualTargetState(poseData) {
+        const manualTargetActive = Boolean(poseData?.detection?.manual_target_active);
+        if (manualTargetActive !== isManualTargetLocked) {
+            setManualTargetLocked(manualTargetActive);
+        }
+    }
+
+    function handleVideoCanvasClick(event) {
+        if (!isTargetSelectionMode || !isAnalyzing || !ws || ws.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        const rect = videoCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height || !videoCanvas.width || !videoCanvas.height) {
+            return;
+        }
+
+        const x = ((event.clientX - rect.left) / rect.width) * videoCanvas.width;
+        const y = ((event.clientY - rect.top) / rect.height) * videoCanvas.height;
+
+        ws.send(JSON.stringify({ type: 'select_target', x, y }));
+        setTargetSelectionMode(false);
+        updateVideoHint('正在切换主目标...');
+    }
+
+    function updateVideoHint(text) {
+        if (videoHint) {
+            videoHint.textContent = text;
+        }
     }
 
     function goBack() {
@@ -322,6 +428,7 @@
         }
         analysisSection.style.display = 'none';
         heroSection.style.display = 'flex';
+        setManualTargetLocked(false);
         setStatus('ready', '就绪');
     }
 

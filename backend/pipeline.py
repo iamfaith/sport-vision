@@ -112,7 +112,7 @@ class Pipeline:
                     )
 
                 # 3. 可视化渲染
-                rendered = self.visualizer.render_frame(frame, pose_result, action_result)
+                rendered = self.visualizer.render_frame(frame, pose_result, action_result, detection_result)
 
                 # 编码为 JPEG base64
                 _, buffer = cv2.imencode(".jpg", rendered, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -163,6 +163,12 @@ class Pipeline:
     def stop(self):
         """停止处理"""
         self.is_running = False
+
+    def set_manual_target(self, x: float, y: float):
+        self.person_detector.set_manual_target(x, y)
+
+    def clear_manual_target(self):
+        self.person_detector.clear_manual_target()
 
     def close(self):
         """释放所有资源"""

@@ -1,5 +1,9 @@
 *.tflite
 flatbuffers/*
+*.png
+*.jpg
+.dotnet/
+tmp/
 # Byte-compiled / optimized
 __pycache__/
 *.py[cod]

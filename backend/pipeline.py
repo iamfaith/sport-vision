@@ -17,8 +17,8 @@ from backend.visualizer import Visualizer
 class Pipeline:
     """视频分析流水线"""
 
-    def __init__(self):
-        self.person_detector = PersonDetectorYOLO()
+    def __init__(self, lock_first_target: bool = True):
+        self.person_detector = PersonDetectorYOLO(lock_first_target=lock_first_target)
         self.pose_analyzer = PoseAnalyzerONNX()
         self.action_recognizer = ActionRecognizer()
         self.visualizer = Visualizer()
@@ -63,6 +63,7 @@ class Pipeline:
             target_h = frame_height
 
         self.is_running = True
+        self.person_detector.reset()
         self.pose_analyzer.reset()
         self.action_recognizer.reset()
         self.visualizer.reset()

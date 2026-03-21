@@ -66,12 +66,16 @@ curl -sL -o models/pose_landmarker_lite.task \
 # optional: set the YOLO person detector model path
 export SPORT_VISION_PERSON_DETECTOR_MODEL=/home/faith/yolo_c/best.onnx
 
+# optional: disable first-target lock mode in code if you want freer target switching
+# Pipeline(lock_first_target=False)
+
 
 # Start server
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 当前视频链路已经改为先用轻量级 YOLO 做人体检测，再把检测框裁剪后送入 ONNX pose 模型。
+默认开启“只跟踪第一次出现的主目标”模式，多人场景下会优先保持同一个人，降低切人概率。
 
 ## 🎬 Usage
 

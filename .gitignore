@@ -4,6 +4,7 @@ flatbuffers/*
 *.jpg
 .dotnet/
 tmp/
+*.mp4
 # Byte-compiled / optimized
 __pycache__/
 *.py[cod]

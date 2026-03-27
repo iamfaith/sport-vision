@@ -54,19 +54,11 @@ class PersonDetectorYOLO:
         if self.manual_target_active and self.tracked_bbox is None and self.pending_manual_target is None:
             return None
 
-        resized_frame, _, _ = letterbox(frame_bgr, self.input_size)
-        image = resized_frame.transpose(2, 0, 1)
-        image = image[::-1]
-        image = np.ascontiguousarray(image).astype(np.float32) / 255.0
-
-        boxes, scores, class_ids = self.model(image)
-        if len(boxes) == 0:
+        inference = self._run_inference(frame_bgr)
+        if inference is None:
             return self._handle_missing_detection(frame_bgr.shape)
 
-        boxes = np.asarray(boxes, dtype=np.float32)
-        scores = np.asarray(scores, dtype=np.float32).reshape(-1)
-        class_ids = np.asarray(class_ids, dtype=np.int32).reshape(-1)
-        boxes = scale_boxes(resized_frame.shape, boxes.copy(), frame_bgr.shape).round()
+        boxes, scores, class_ids = inference
 
         best_index = self._select_best_detection(boxes, scores, frame_bgr.shape)
         if best_index is None:
@@ -77,6 +69,36 @@ class PersonDetectorYOLO:
         self.missed_frames = 0
 
         return self._build_detection_result(selected_box, frame_bgr.shape, float(scores[best_index]), int(class_ids[best_index]))
+
+    def detect_all(self, frame_bgr: np.ndarray, max_people: Optional[int] = None) -> list[dict]:
+        """Return all person detections in the current frame without tracking selection."""
+        inference = self._run_inference(frame_bgr)
+        if inference is None:
+            return []
+
+        boxes, scores, class_ids = inference
+        frame_area = float(frame_bgr.shape[0] * frame_bgr.shape[1])
+        widths = np.clip(boxes[:, 2] - boxes[:, 0], a_min=1.0, a_max=None)
+        heights = np.clip(boxes[:, 3] - boxes[:, 1], a_min=1.0, a_max=None)
+        area_ratio = (widths * heights) / max(frame_area, 1.0)
+        ranking = scores + 0.2 * area_ratio
+        sorted_indices = np.argsort(-ranking)
+
+        if max_people is not None and max_people > 0:
+            sorted_indices = sorted_indices[:max_people]
+
+        detections = []
+        for index in sorted_indices:
+            detections.append(
+                self._build_detection_result(
+                    boxes[index],
+                    frame_bgr.shape,
+                    float(scores[index]),
+                    int(class_ids[index]),
+                    tracking_prediction=False,
+                )
+            )
+        return detections
 
     def reset(self):
         self.tracked_bbox = None
@@ -100,6 +122,22 @@ class PersonDetectorYOLO:
             self.model.session = None
             self.model = None
 
+    def _run_inference(self, frame_bgr: np.ndarray) -> Optional[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        resized_frame, _, _ = letterbox(frame_bgr, self.input_size)
+        image = resized_frame.transpose(2, 0, 1)
+        image = image[::-1]
+        image = np.ascontiguousarray(image).astype(np.float32) / 255.0
+
+        boxes, scores, class_ids = self.model(image)
+        if len(boxes) == 0:
+            return None
+
+        boxes = np.asarray(boxes, dtype=np.float32)
+        scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+        class_ids = np.asarray(class_ids, dtype=np.int32).reshape(-1)
+        boxes = scale_boxes(resized_frame.shape, boxes.copy(), frame_bgr.shape).round()
+        return boxes, scores, class_ids
+
     def _resolve_model_path(self, model_path: Optional[str]) -> Path:
         if model_path:
             path = Path(model_path).expanduser().resolve()
@@ -115,6 +153,7 @@ class PersonDetectorYOLO:
         candidates = [
             Path(__file__).resolve().parent.parent / "models" / "person_detector_yolo.onnx",
             Path(__file__).resolve().parent.parent / "yolo" / "best.onnx",
+            Path.home() / "yoloc" / "best.onnx",
             Path.home() / "yolo_c" / "best.onnx",
             Path.home() / "yolov5" / "best.onnx",
             Path.home() / "yolov5" / "exp4" / "weights" / "best.onnx",

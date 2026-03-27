@@ -74,6 +74,33 @@ export SPORT_VISION_PERSON_DETECTOR_MODEL=/home/faith/yolo_c/best.onnx
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Action Template Validation With ONNX
+
+Use a standard-action video to extract a normalized pose sequence template:
+
+```bash
+/home/faith/sport-vision/.venv/bin/python infer_video_action_onnx.py b.mp4 \
+  --action-name serve
+```
+
+By default this saves the template to `uploads/serve_template.json`. You can also set a custom path
+with `--template-json`; if that file does not exist yet, the script will create it as a new template.
+
+Then validate a new video against that template:
+
+```bash
+/home/faith/sport-vision/.venv/bin/python infer_video_action_onnx.py b.mp4 \
+  --template-json uploads/serve_template.json \
+  --match-threshold 0.72
+
+
+/home/faith/sport-vision/.venv/bin/python infer_video_action_onnx.py b.mp4 --template-json uploads/test_cli_template.json --max-frames 280 --match-threshold 0.72
+```
+
+The generated template JSON stores the normalized keypoint-change sequence, joint-angle sequence,
+and motion statistics extracted from the reference action. When `--template-json` points to an existing
+file, the script compares the new video against that template and reports whether the movement is standard.
+
 当前视频链路已经改为先用轻量级 YOLO 做人体检测，再把检测框裁剪后送入 ONNX pose 模型。
 默认开启“只跟踪第一次出现的主目标”模式，多人场景下会优先保持同一个人，降低切人概率。
 分析界面支持点击 🎯 后在视频上手动点选主目标，画面也会显示当前检测框和跟踪状态。
